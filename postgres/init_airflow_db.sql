@@ -1,0 +1,1 @@
+SELECT 'Airflow DB created';

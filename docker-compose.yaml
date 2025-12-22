@@ -1,0 +1,72 @@
+version: '3.9'
+
+x-airflow-common:
+  &airflow-common
+  build: ./airflow
+  env_file: .env
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${POSTGRES_AIRFLOW_PASSWORD}@postgres-airflow:5432/${POSTGRES_AIRFLOW_DB}
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/logs:/opt/airflow/logs
+    - ./airflow/plugins:/opt/airflow/plugins
+  depends_on:
+    - postgres-airflow
+
+services:
+
+  postgres-main:
+    image: postgres:15
+    container_name: postgres-main
+    env_file: .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB_MAIN}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pg_main_data:/var/lib/postgresql/data
+      - ./postgres/init_main_db.sql:/docker-entrypoint-initdb.d/init_main_db.sql
+    ports:
+      - "5433:5432"
+
+  postgres-airflow:
+    image: postgres:15
+    container_name: postgres-airflow
+    env_file: .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_AIRFLOW_DB}
+      POSTGRES_USER: ${POSTGRES_AIRFLOW_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_AIRFLOW_PASSWORD}
+    volumes:
+      - pg_airflow_data:/var/lib/postgresql/data
+      - ./postgres/init_airflow_db.sql:/docker-entrypoint-initdb.d/init_airflow_db.sql
+    ports:
+      - "5434:5432"
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: pgadmin
+    env_file: .env
+    volumes:
+      - ./pgadmin/servers.json:/pgadmin4/servers.json
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres-main
+      - postgres-airflow
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+
+volumes:
+  pg_main_data:
+  pg_airflow_data:
