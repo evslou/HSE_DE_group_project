@@ -19,7 +19,7 @@ services:
 
   postgres-main:
     image: postgres:15
-    container_name: postgres-main
+    container_name: postgres-main-gp
     env_file: .env
     environment:
       POSTGRES_DB: ${POSTGRES_DB_MAIN}
@@ -33,7 +33,7 @@ services:
 
   postgres-airflow:
     image: postgres:15
-    container_name: postgres-airflow
+    container_name: postgres-airflow-gp
     env_file: .env
     environment:
       POSTGRES_DB: ${POSTGRES_AIRFLOW_DB}
@@ -47,15 +47,15 @@ services:
 
   pgadmin:
     image: dpage/pgadmin4:latest
-    container_name: pgadmin
+    container_name: pgadmin-gp
     env_file: .env
     volumes:
       - ./pgadmin/servers.json:/pgadmin4/servers.json
     ports:
       - "5050:80"
     depends_on:
-      - postgres-main
-      - postgres-airflow
+      - postgres-main-gp
+      - postgres-airflow-gp
 
   airflow-webserver:
     <<: *airflow-common
