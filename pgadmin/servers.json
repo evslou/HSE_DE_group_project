@@ -6,7 +6,8 @@
       "Host": "postgres-main",
       "Port": 5432,
       "MaintenanceDB": "main_db",
-      "Username": "admin",
+      "Username": "teambi",
+      "SavePassword": true,
       "SSLMode": "prefer"
     },
     "2": {
@@ -15,7 +16,8 @@
       "Host": "postgres-airflow",
       "Port": 5432,
       "MaintenanceDB": "airflow_db",
-      "Username": "airflow",
+      "Username": "teambi",
+      "SavePassword": true,
       "SSLMode": "prefer"
     }
   }
