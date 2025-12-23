@@ -14,8 +14,7 @@ x-airflow-common:
     - ./airflow/logs:/opt/airflow/logs
     - ./airflow/plugins:/opt/airflow/plugins
   depends_on:
-      postgres-airflow:
-        condition: service_completed_successfully
+      - postgres-airflow
 
 services:
 
@@ -88,6 +87,7 @@ services:
     depends_on:
       airflow-init:
         condition: service_completed_successfully
+        restart: true
 
 volumes:
   pg_main_data:
