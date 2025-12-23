@@ -11,19 +11,19 @@ echo "Initializing Airflow database..."
 airflow db migrate
 
 echo "Checking if admin user exists..."
-USER_EXISTS=$(airflow users list | grep -c "admin" || true)
+USER_EXISTS=$(airflow users list | grep -c "${AIRFLOW_DEFAULT_USERNAME}" || true)
 
 if [ "$USER_EXISTS" -eq "0" ]; then
-    echo "Creating admin user..."
+    echo "Creating ${AIRFLOW_DEFAULT_USERNAME} user..."
     airflow users create \
-        --username admin \
-        --password admin \
-        --firstname Admin \
-        --lastname User \
+        --username "${AIRFLOW_DEFAULT_USERNAME}" \
+        --password "${AIRFLOW_DEFAULT_PASSWORD}" \
+        --firstname "${AIRFLOW_DEFAULT_FIRSTNAME}" \
+        --lastname "${AIRFLOW_DEFAULT_LASTNAME}" \
         --role Admin \
-        --email admin@example.com
+        --email "${AIRFLOW_DEFAULT_EMAIL}"
 else
-    echo "Admin user already exists — skipping creation."
+    echo "${AIRFLOW_DEFAULT_USERNAME} user already exists — skipping creation."
 fi
 
 echo "Starting Airflow: airflow $@"
