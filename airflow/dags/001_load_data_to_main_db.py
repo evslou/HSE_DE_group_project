@@ -4,13 +4,15 @@ DAG для инкрементальной загрузки данных из Par
 """
 from datetime import datetime, timedelta
 import os
+import pandas as pd
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, when, lit, to_timestamp, row_number
-from pyspark.sql.window import Window
+from pyspark import SparkConf, SparkContext
 from pyspark.sql.types import TimestampType
+from pyspark.sql.functions import col, when, lit, to_date, date_format, row_number, monotonically_increasing_id, unix_timestamp, to_timestamp, current_timestamp, split, element_at
+from pyspark.sql.window import Window
 
 # Аргументы DAG по умолчанию
 default_args = {
@@ -310,3 +312,58 @@ process_and_load_task = PythonOperator(
 
 # Определение последовательности задач
 get_new_files_task >> process_and_load_task
+
+# with DAG(
+#     dag_id=DAG_ID,
+#     start_date=datetime(2025, 12, 11),
+#     schedule_interval="0 * * * *",
+#     catchup=False,
+#     tags=["crypto", "api", "etl"]
+# ) as dag:
+
+#     create_staging_table = PostgresOperator(
+#         task_id="create_staging_table",
+#         postgres_conn_id="main_postgres",
+#         sql="""
+#         CREATE TABLE IF NOT EXISTS crypto_staging (
+#             timestamp TIMESTAMP,
+#             price FLOAT,
+#             coin TEXT
+#         );
+#         """
+#     )
+
+#     create_final_table = PostgresOperator(
+#         task_id="create_final_table",
+#         postgres_conn_id="main_postgres",
+#         sql="""
+#         CREATE TABLE IF NOT EXISTS crypto_aggregated (
+#             coin TEXT PRIMARY KEY,
+#             avg_price FLOAT,
+#             min_price FLOAT,
+#             max_price FLOAT,
+#             processed_at TIMESTAMP
+#         );
+#         """
+#     )
+
+#     fetch_staging = PythonOperator(
+#         task_id="fetch_crypto_data",
+#         python_callable=fetch_crypto_data,
+#         retries=3,
+#         retry_delay=timedelta(seconds=30)
+#     )
+
+#     transform = PythonOperator(
+#         task_id="transform_crypto_data",
+#         python_callable=transform_crypto_data
+#     )
+
+#     load_final = PythonOperator(
+#         task_id="load_crypto_to_postgres",
+#         python_callable=load_crypto_to_postgres
+#     )
+
+#     create_staging_table >> fetch_staging
+#     create_final_table >> transform
+#     fetch_staging >> transform >> load_final

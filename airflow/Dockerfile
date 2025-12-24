@@ -3,8 +3,10 @@ FROM apache/airflow:2.10.2-python3.10
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
     netcat-openbsd \
-    build-essential && \
-    apt-get clean && \
+    build-essential \
+    openjdk-11-jre-headless \
+    libpq-dev \
+    && apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
 USER airflow
