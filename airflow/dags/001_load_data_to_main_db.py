@@ -5,6 +5,8 @@ DAG для инкрементальной загрузки данных из Par
 from datetime import datetime, timedelta
 import os
 import pandas as pd
+from sqlalchemy import create_engine, text
+from airflow.configuration import conf
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
@@ -37,42 +39,53 @@ dag = DAG(
 
 # Константы
 DATA_DIR = "/opt/airflow/data"  # Директория с parquet-файлами
-
 def get_new_parquet_files(**context):
     """
     Задача 1: Находит новые Parquet-файлы.
-    Сравнивает файлы в DATA_DIR с записями в таблице processed_files.
+    Использует метабазу Airflow (postgres-airflow) для таблицы processed_files
     """
-    airflow_db_hook = PostgresHook()
-    connection = airflow_db_hook.get_conn()
-    cursor = connection.cursor()
-
-    # 1. Получаем список уже обработанных файлов
-    cursor.execute("SELECT file_name FROM processed_files;")
-    processed_files = {row[0] for row in cursor.fetchall()}
-
-    # 2. Получаем список всех parquet-файлов в директории
-    all_files = [f for f in os.listdir(DATA_DIR) if f.endswith('.parquet')]
-
-    # 3. Определяем новые файлы
-    new_files = [f for f in all_files if f not in processed_files]
-
-    # 4. Передаём список новых файлов в следующую задачу через XCom
-    context['ti'].xcom_push(key='new_files', value=new_files)
-
-    print(f"Найдено файлов в директории: {len(all_files)}")
-    print(f"Уже обработано: {len(processed_files)}")
-    print(f"Новых файлов для обработки: {len(new_files)}")
-    if new_files:
-        print(f"Список новых файлов: {new_files}")
-
-    cursor.close()
-    connection.close()
-
-    if not new_files:
-        # Если новых файлов нет, можно пропустить последующие задачи
-        print("Новых файлов для обработки не найдено.")
-
+    
+    # 1. Получаем строку подключения к метабазе Airflow из конфигурации
+    sql_alchemy_conn = conf.get('database', 'sql_alchemy_conn')
+    
+    # 2. Создаем engine для подключения к метабазе
+    engine = create_engine(sql_alchemy_conn)
+    
+    try:
+        with engine.connect() as connection:
+            # Создаем таблицу processed_files если её нет
+            # connection.execute(text("""
+            #     CREATE TABLE IF NOT EXISTS processed_files (
+            #         file_name VARCHAR(255) PRIMARY KEY,
+            #         processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            #     );
+            # """))
+            # connection.commit()
+            
+            # Получаем список уже обработанных файлов
+            result = connection.execute("SELECT file_name FROM processed_files;")
+            processed_files = {row[0] for row in result}
+            
+            # Получаем список всех parquet-файлов в директории
+            all_files = [f for f in os.listdir(DATA_DIR) if f.endswith('.parquet')]
+            
+            # Определяем новые файлы
+            new_files = [f for f in all_files if f not in processed_files]
+            
+            # Передаём список новых файлов в следующую задачу через XCom
+            context['ti'].xcom_push(key='new_files', value=new_files)
+            
+            print(f"Найдено файлов в директории {DATA_DIR}: {len(all_files)}")
+            print(f"Уже обработано: {len(processed_files)}")
+            print(f"Новых файлов для обработки: {len(new_files)}")
+            
+            if not new_files:
+                print("Новых файлов для обработки не найдено.")
+                
+    except Exception as e:
+        print(f"Ошибка при работе с метабазой Airflow: {e}")
+        raise
+        
 def process_and_load_data(**context):
     """
     Задача 2: Обрабатывает новые файлы и загружает данные в PostgreSQL.
@@ -96,7 +109,7 @@ def process_and_load_data(**context):
     main_db_hook = PostgresHook(postgres_conn_id='postgres_main_gp')
     
     # Hook для БД Airflow (для обновления processed_files)
-    airflow_db_hook = PostgresHook()
+    airflow_db_hook = PostgresHook(postgres_conn_id='postgres_airflow-gp')
 
     try:
         for file_name in new_files:

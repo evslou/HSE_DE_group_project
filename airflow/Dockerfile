@@ -4,7 +4,7 @@ USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
     netcat-openbsd \
     build-essential \
-    openjdk-11-jre-headless \
+    default-jre-headless \
     libpq-dev \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/*
