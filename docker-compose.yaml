@@ -9,6 +9,7 @@ x-airflow-common:
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_AIRFLOW_USER}:${POSTGRES_AIRFLOW_PASSWORD}@postgres-airflow-gp:5432/${POSTGRES_AIRFLOW_DB}
+    AIRFLOW_CONN_POSTGRES_MAIN_GP: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres-main-gp:5432/${POSTGRES_DB_MAIN}
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - ./airflow/logs:/opt/airflow/logs
@@ -76,9 +77,6 @@ services:
   airflow-webserver:
     <<: *airflow-common
     command: webserver
-    environment:
-      <<: *airflow-common-env
-      AIRFLOW_CONN_POSTGRES_MAIN_GP: postgres-main://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres-main-gp:5432/${POSTGRES_DB_MAIN}
     ports:
       - "8080:8080"
     depends_on:

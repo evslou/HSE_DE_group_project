@@ -53,15 +53,6 @@ def get_new_parquet_files(**context):
     
     try:
         with engine.connect() as connection:
-            # Создаем таблицу processed_files если её нет
-            # connection.execute(text("""
-            #     CREATE TABLE IF NOT EXISTS processed_files (
-            #         file_name VARCHAR(255) PRIMARY KEY,
-            #         processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            #     );
-            # """))
-            # connection.commit()
-            
             # Получаем список уже обработанных файлов
             result = connection.execute("SELECT file_name FROM processed_files;")
             processed_files = {row[0] for row in result}
@@ -109,8 +100,9 @@ def process_and_load_data(**context):
     main_db_hook = PostgresHook(postgres_conn_id='postgres_main_gp')
     
     # Hook для БД Airflow (для обновления processed_files)
-    airflow_db_hook = PostgresHook(postgres_conn_id='postgres_airflow-gp')
-
+    sql_alchemy_conn = conf.get('database', 'sql_alchemy_conn')
+    engine = create_engine(sql_alchemy_conn)
+    
     try:
         for file_name in new_files:
             print(f"Начинаем обработку файла: {file_name}")
@@ -288,17 +280,15 @@ def process_and_load_data(**context):
                 print(f"Таблица {table_name} успешно обновлена.")
             
             # Обновляем таблицу processed_files в БД Airflow
-            connection = airflow_db_hook.get_conn()
-            cursor = connection.cursor()
-            insert_query = """
-                INSERT INTO processed_files (file_name)
-                VALUES (%s)
-                ON CONFLICT (file_name) DO NOTHING;
-            """
-            cursor.execute(insert_query, (file_name,))
-            connection.commit()
-            cursor.close()
-            connection.close()
+            with engine.connect() as connection:
+                cursor = connection.cursor()
+                insert_query = """
+                    INSERT INTO processed_files (file_name)
+                    VALUES (%s)
+                    ON CONFLICT (file_name) DO NOTHING;
+                """
+                connection.execute(insert_query, (file_name,))
+                connection.commit()
             
             print(f"Файл {file_name} успешно обработан и добавлен в отслеживаемые.")
             
