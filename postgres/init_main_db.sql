@@ -15,6 +15,8 @@ CREATE TABLE driver
 CREATE TABLE store
 (
   store_id INT NOT NULL,
+  store_name VARCHAR NOT NULL,
+  store_city VARCHAR NOT NULL,
   store_address VARCHAR NOT NULL,
   PRIMARY KEY (store_id)
 );
@@ -82,6 +84,7 @@ CREATE TABLE delivery
   delivery_cost FLOAT NOT NULL,
   delivery_started_at TIMESTAMP,
   delivered_at TIMESTAMP,
+  deliver_city VARCHAR NOT NULL,
   address_text VARCHAR NOT NULL,
   driver_id INT NOT NULL,
   order_id INT NOT NULL,

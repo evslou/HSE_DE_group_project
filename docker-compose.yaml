@@ -75,6 +75,9 @@ services:
   airflow-webserver:
     <<: *airflow-common
     command: webserver
+    environment:
+      <<: *airflow-common-env
+      AIRFLOW_CONN_POSTGRES_MAIN_GP: postgres-main://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres-main-gp:5432/${POSTGRES_DB_MAIN}
     ports:
       - "8080:8080"
     depends_on:
