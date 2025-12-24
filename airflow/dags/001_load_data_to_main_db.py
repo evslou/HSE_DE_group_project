@@ -1,0 +1,312 @@
+"""
+DAG для инкрементальной загрузки данных из Parquet-файлов в PostgreSQL.
+Обрабатывает только новые файлы, имена которых ещё не сохранены в таблице processed_files.
+"""
+from datetime import datetime, timedelta
+import os
+from airflow import DAG
+from airflow.operators.python import PythonOperator
+from airflow.providers.postgres.hooks.postgres import PostgresHook
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, when, lit, to_timestamp, row_number
+from pyspark.sql.window import Window
+from pyspark.sql.types import TimestampType
+
+# Аргументы DAG по умолчанию
+default_args = {
+    'owner': 'teambi',
+    'depends_on_past': False,
+    'start_date': datetime(2025, 1, 1),
+    'email_on_failure': False,
+    'email_on_retry': False,
+    'retries': 1,
+    'retry_delay': timedelta(minutes=5),
+}
+
+# Определение DAG
+dag = DAG(
+    'parquet_to_postgres_loader',
+    default_args=default_args,
+    description='Инкрементальная загрузка Parquet в Postgres',
+    schedule_interval=timedelta(hours=6),  # Запуск каждые 6 часов
+    catchup=False,
+    tags=['loader', 'postgres'],
+)
+
+# Константы
+DATA_DIR = "/opt/airflow/data"  # Директория с parquet-файлами
+
+def get_new_parquet_files(**context):
+    """
+    Задача 1: Находит новые Parquet-файлы.
+    Сравнивает файлы в DATA_DIR с записями в таблице processed_files.
+    """
+    airflow_db_hook = PostgresHook()
+    connection = airflow_db_hook.get_conn()
+    cursor = connection.cursor()
+
+    # 1. Получаем список уже обработанных файлов
+    cursor.execute("SELECT file_name FROM processed_files;")
+    processed_files = {row[0] for row in cursor.fetchall()}
+
+    # 2. Получаем список всех parquet-файлов в директории
+    all_files = [f for f in os.listdir(DATA_DIR) if f.endswith('.parquet')]
+
+    # 3. Определяем новые файлы
+    new_files = [f for f in all_files if f not in processed_files]
+
+    # 4. Передаём список новых файлов в следующую задачу через XCom
+    context['ti'].xcom_push(key='new_files', value=new_files)
+
+    print(f"Найдено файлов в директории: {len(all_files)}")
+    print(f"Уже обработано: {len(processed_files)}")
+    print(f"Новых файлов для обработки: {len(new_files)}")
+    if new_files:
+        print(f"Список новых файлов: {new_files}")
+
+    cursor.close()
+    connection.close()
+
+    if not new_files:
+        # Если новых файлов нет, можно пропустить последующие задачи
+        print("Новых файлов для обработки не найдено.")
+
+def process_and_load_data(**context):
+    """
+    Задача 2: Обрабатывает новые файлы и загружает данные в PostgreSQL.
+    Выполняет трансформацию для каждой таблицы и инкрементальную вставку.
+    """
+    # Получаем список новых файлов из предыдущей задачи
+    ti = context['ti']
+    new_files = ti.xcom_pull(task_ids='get_new_files', key='new_files')
+
+    if not new_files:
+        print("Нет новых файлов для обработки. Задача завершена.")
+        return
+
+    # Инициализация SparkSession
+    spark = SparkSession.builder \
+        .appName("AirflowParquetLoader") \
+        .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+        .getOrCreate()
+
+    # Hook для основной БД приложения
+    main_db_hook = PostgresHook(postgres_conn_id='postgres_main_gp')
+    
+    # Hook для БД Airflow (для обновления processed_files)
+    airflow_db_hook = PostgresHook()
+
+    try:
+        for file_name in new_files:
+            print(f"Начинаем обработку файла: {file_name}")
+            file_path = os.path.join(DATA_DIR, file_name)
+
+            # Чтение Parquet-файла
+            df = spark.read.parquet(file_path)
+
+            # --- Трансформация данных для каждой таблицы ---
+            # 1. Таблица users
+            users_df = df.select(
+                col("user_id").cast("int"),
+                col("user_phone").cast("string")
+            ).distinct().orderBy("user_id")
+
+            # 2. Таблица driver
+            driver_df = df.select(
+                col("driver_id").cast("int"),
+                col("driver_phone").cast("string")
+            ).distinct().orderBy("driver_id")
+
+            # 3. Таблица store
+            # Предполагаем, что store_name, store_city можно получить или задать по умолчанию
+            store_df = df.select(
+                col("store_id").cast("int"),
+                col("store_address").cast("string")
+            ).distinct()
+            # Добавляем недостающие колонки (пример)
+            store_df = store_df.withColumn("store_city", element_at(split(col("store_address"), ", "), 2)) \
+                               .withColumn("store_name", element_at(split(col("store_address"), ", "), 1))
+
+            # 4. Таблица payment_type
+            payment_types = df.select("payment_type").distinct().collect()
+            payment_type_dict = []
+            payment_id = 1
+
+            for row in payment_types:
+                payment_type = row['payment_type']
+                # Проверяем, существует ли уже такой тип платежа
+                if not any(pt[1] == payment_type for pt in payment_type_dict):
+                    payment_type_dict.append((payment_id, payment_type))
+                    payment_id += 1
+
+            # Создаём DataFrame для payment_type
+            payment_type_df = spark.createDataFrame(
+                payment_type_dict,
+                ["payment_type_id", "payment_type"]
+            )
+
+            # 5. Таблица item_category
+            item_category_df = df.select(
+                col("item_category").cast("string").alias("item_category")
+            ).distinct()
+            window_spec = Window.orderBy("item_category")
+            item_category_df = item_category_df.withColumn(
+                "item_category_id",
+                row_number().over(window_spec)
+            ).select("item_category_id", "item_category")
+
+            # 6. Таблица orders
+            orders_df = df.select(
+                col("order_id").cast("int"),
+                to_timestamp(col("created_at")).alias("created_at"),
+                to_timestamp(col("paid_at")).alias("paid_at"),
+                to_timestamp(col("canceled_at")).alias("canceled_at"),
+                col("order_discount").cast("float"),
+                col("order_cancellation_reason").cast("string"),
+                col("user_id").cast("int"),
+                col("store_id").cast("int"),
+                col("payment_type").alias("payment_type_str")  # Временная колонка
+            ).distinct()
+
+            # Соединяем с payment_type_df, чтобы получить payment_type_id
+            orders_df = orders_df.join(
+                payment_type_df,
+                orders_df.payment_type_str == payment_type_df.payment_type,
+                "left"
+            ).drop("payment_type_str", "payment_type")
+
+            # 7. Таблица items
+            items_df = df.select(
+                col("item_id").cast("int"),
+                col("item_title").cast("string"),
+                col("item_price").cast("float"),
+                col("item_category").cast("string")
+            ).distinct()
+
+            # Добавляем item_category_id
+            items_df = items_df.join(
+                item_category_df,
+                items_df.item_category == item_category_df.item_category,
+                "left"
+            ).drop("item_category")
+
+            # Добавляем временные метки валидности (SCD Type 2)
+            current_time = datetime.now()
+            max_time = datetime(9999, 12, 31, 23, 59, 59)
+            items_df = items_df.withColumn(
+                "validity_datetime_start",
+                lit(current_time).cast(TimestampType())
+            ).withColumn(
+                "validity_datetime_end",
+                lit(max_time).cast(TimestampType())
+            ).select(
+                "item_id", "item_title", "item_price",
+                "validity_datetime_start", "validity_datetime_end",
+                "item_category_id"
+            ).orderBy("item_id")
+
+            # 8. Таблица order_to_item
+            order_to_item_df = df.select(
+                col("order_id").cast("int"),
+                col("item_id").cast("int"),
+                col("item_quantity").cast("float"),
+                col("item_canceled_quantity").cast("float"),
+                when(col("item_replaced_id").isNotNull(),
+                     col("item_replaced_id").cast("int")).otherwise(lit(0)).alias("item_replaced_id"),
+                col("item_discount").cast("float")
+            ).distinct()
+
+            # Добавляем временные метки валидности из items_df
+            order_to_item_df = order_to_item_df.join(
+                items_df.select("item_id", "validity_datetime_start", "validity_datetime_end"),
+                "item_id"
+            )
+
+            # 9. Таблица delivery
+            delivery_df = df.select(
+                col("order_id").cast("int"),
+                col("driver_id").cast("int"),
+                col("delivery_cost").cast("float"),
+                to_timestamp(col("delivery_started_at")).alias("delivery_started_at"),
+                to_timestamp(col("delivered_at")).alias("delivered_at"),
+                col("address_text").cast("string").alias("address_text")
+            ).distinct()
+
+            # Удаляем записи, где driver_id отсутствует и добавляем город доставки
+            delivery_df = delivery_df.filter(col("driver_id").isNotNull()) \
+                                     .withColumn("deliver_city", element_at(split(col("address_text"), ", "), 1))
+
+
+            # --- Загрузка данных в основную БД (postgres-main) ---
+            # Получаем параметры подключения для основной БД
+            main_conn = main_db_hook.get_connection("postgres_main_gp")
+            main_jdbc_url = f"jdbc:postgresql://{main_conn.host}:{main_conn.port}/{main_conn.schema}"
+            
+            # Функция для загрузки DataFrame в PostgreSQL
+            def load_to_postgres(df, table_name):
+                df.write \
+                    .format("jdbc") \
+                    .option("url", main_jdbc_url) \
+                    .option("dbtable", table_name) \
+                    .option("user", main_conn.login) \
+                    .option("password", main_conn.password) \
+                    .option("driver", "org.postgresql.Driver") \
+                    .mode("append") \
+                    .save()
+            
+            # Загрузка всех таблиц в основную БД
+            tables = [
+                (users_df, "users"),
+                (driver_df, "driver"),
+                (store_df, "store"),
+                (payment_type_df, "payment_type"),
+                (item_category_df, "item_category"),
+                (orders_df, "orders"),
+                (items_df, "items"),
+                (order_to_item_df, "order_to_item"),
+                (delivery_df, "delivery")
+            ]
+            
+            for df_table, table_name in tables:
+                print(f"Загрузка данных в таблицу {table_name}...")
+                load_to_postgres(df_table, table_name)
+                print(f"Таблица {table_name} успешно обновлена.")
+            
+            # Обновляем таблицу processed_files в БД Airflow
+            connection = airflow_db_hook.get_conn()
+            cursor = connection.cursor()
+            insert_query = """
+                INSERT INTO processed_files (file_name)
+                VALUES (%s)
+                ON CONFLICT (file_name) DO NOTHING;
+            """
+            cursor.execute(insert_query, (file_name,))
+            connection.commit()
+            cursor.close()
+            connection.close()
+            
+            print(f"Файл {file_name} успешно обработан и добавлен в отслеживаемые.")
+            
+    except Exception as e:
+        print(f"Ошибка при обработке файлов: {e}")
+        raise
+    finally:
+        spark.stop()
+
+# Определение задач DAG
+get_new_files_task = PythonOperator(
+    task_id='get_new_files',
+    python_callable=get_new_parquet_files,
+    provide_context=True,
+    dag=dag,
+)
+
+process_and_load_task = PythonOperator(
+    task_id='process_and_load_data',
+    python_callable=process_and_load_data,
+    provide_context=True,
+    dag=dag,
+)
+
+# Определение последовательности задач
+get_new_files_task >> process_and_load_task

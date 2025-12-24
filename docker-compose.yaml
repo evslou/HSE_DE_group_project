@@ -12,6 +12,7 @@ x-airflow-common:
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - ./airflow/logs:/opt/airflow/logs
+    - ./airflow/data:/opt/airflow/data
     - ./airflow/plugins:/opt/airflow/plugins
   depends_on:
       - postgres-airflow
