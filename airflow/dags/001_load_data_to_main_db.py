@@ -246,20 +246,35 @@ def process_and_load_data(**context):
 
             # --- Загрузка данных в основную БД (postgres-main) ---
             # Получаем параметры подключения для основной БД
-            main_conn = main_db_hook.get_connection("postgres_main_gp")
-            main_jdbc_url = f"jdbc:postgresql://{main_conn.host}:{main_conn.port}/{main_conn.schema}"
+            # main_conn = main_db_hook.get_connection("postgres_main_gp")
+            # main_jdbc_url = f"jdbc:postgresql://{main_conn.host}:{main_conn.port}/{main_conn.schema}"
             
             # Функция для загрузки DataFrame в PostgreSQL
-            def load_to_postgres(df, table_name):
-                df.write \
-                    .format("jdbc") \
-                    .option("url", main_jdbc_url) \
-                    .option("dbtable", table_name) \
-                    .option("user", main_conn.login) \
-                    .option("password", main_conn.password) \
-                    .option("driver", "org.postgresql.Driver") \
-                    .mode("append") \
-                    .save()
+            # def load_to_postgres(df, table_name):
+            #     df.write \
+            #         .format("jdbc") \
+            #         .option("url", main_jdbc_url) \
+            #         .option("dbtable", table_name) \
+            #         .option("user", main_conn.login) \
+            #         .option("password", main_conn.password) \
+            #         .option("driver", "org.postgresql.Driver") \
+            #         .mode("append") \
+            #         .save()
+            def load_to_postgres(spark_df, table_name):
+                pandas_df = spark_df.toPandas()
+                pandas_df = pandas_df.where(pandas_df.notna(), None)
+                
+                rows = [tuple(row) for row in pandas_df.to_numpy()]
+                columns = list(pandas_df.columns)
+                
+                main_db_hook.insert_rows(
+                     table=table_name
+                    ,rows=rows
+                    ,target_fields=columns
+                    ,commit_every=1000  # Пакетная вставка по 1000 строк
+                    # ,replace=False
+                    # ,replace_index=columns  # Если нужно UPSERT логика
+                )
             
             # Загрузка всех таблиц в основную БД
             tables = [
