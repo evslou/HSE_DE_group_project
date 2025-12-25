@@ -79,6 +79,11 @@ CREATE TABLE order_to_item
   FOREIGN KEY (item_replaced_id) REFERENCES items(item_id)
 );
 
+INSERT INTO item_category (item_category_id, item_category)
+VALUES (0, 'Default Null category');
+INSERT INTO items (item_id, item_title, item_price, item_category_id)
+VALUES (0, 'Default Null item', -1, 0);
+
 CREATE TABLE delivery
 (
   delivery_started_at TIMESTAMP,

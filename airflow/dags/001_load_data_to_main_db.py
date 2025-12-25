@@ -212,8 +212,7 @@ def process_and_load_data(**context):
                 col("item_id").cast("int"),
                 col("item_quantity").cast("float"),
                 col("item_canceled_quantity").cast("float"),
-                when(col("item_replaced_id").isNotNull(),
-                     col("item_replaced_id").cast("int")).otherwise(lit(0)).alias("item_replaced_id"),
+                col("item_replaced_id").cast("int"),
                 col("item_discount").cast("float")
             ).distinct()
 
@@ -241,23 +240,79 @@ def process_and_load_data(**context):
             #         .option("driver", "org.postgresql.Driver") \
             #         .mode("append") \
             #         .save()
-            def load_to_postgres(spark_df, table_name, primary_key_list):
-                pandas_df = spark_df.toPandas()
-                pandas_df = pandas_df.where(pandas_df.notna(), None)
-                pandas_df = pandas_df.replace({pd.NaT: None})
+            # def load_to_postgres(spark_df, table_name, primary_key_list):
+            #     pandas_df = spark_df.toPandas()
+            #     pandas_df = pandas_df.where(pandas_df.notna(), None)
+            #     pandas_df = pandas_df.replace({pd.NaT: None})
                 
-                rows = [tuple(row) for row in pandas_df.to_numpy()]
-                columns = list(pandas_df.columns)
+            #     rows = [tuple(row) for row in pandas_df.to_numpy()]
+            #     columns = list(pandas_df.columns)
                 
-                main_db_hook.insert_rows(
-                     table=table_name
-                    ,rows=rows
-                    ,target_fields=columns
-                    ,commit_every=1000  # Пакетная вставка по 1000 строк
-                    ,replace=True
-                    ,replace_index=primary_key_list
-                )
-            
+            #     main_db_hook.insert_rows(
+            #          table=table_name
+            #         ,rows=rows
+            #         ,target_fields=columns
+            #         ,commit_every=1000  # Пакетная вставка по 1000 строк
+            #         ,replace=True
+            #         ,replace_index=primary_key_list
+            #     )
+            def load_to_postgres(spark_df, table_name, primary_key_list, batch_size=5000):
+                """
+                Использует collect() для сбора данных (может быть эффективнее для некоторых случаев)
+                """
+                columns = spark_df.columns
+                
+                # Собираем данные напрямую из PySpark
+                iterator = spark_df.toLocalIterator()
+        
+                rows_batch = []
+                total_rows = 0
+                batch_count = 0
+                
+                try:
+                    for row in iterator:
+                        row_data = []
+                        for col in columns:
+                            val = row[col]
+                            if val is None or (isinstance(val, float) and pd.isna(val)):
+                                row_data.append(None)
+                            else:
+                                row_data.append(val)
+                        rows_batch.append(tuple(row_data))
+                        
+                        # Когда накопился пакет, вставляем его
+                        if len(rows_batch) >= batch_size:
+                            batch_count += 1
+                            main_db_hook.insert_rows(
+                                 table=table_name
+                                ,rows=rows_batch
+                                ,target_fields=columns
+                                ,commit_every=batch_size
+                                ,replace=True
+                                ,replace_index=primary_key_list
+                            )
+                            total_rows += len(rows_batch)
+                            print(f"  Пакет {batch_count}: вставлено {total_rows} строк")
+                            rows_batch = []
+                    
+                    # Вставляем остатки
+                    if rows_batch:
+                        main_db_hook.insert_rows(
+                             table=table_name
+                            ,rows=rows_batch
+                            ,target_fields=columns
+                            ,commit_every=batch_size
+                            ,replace=True
+                            ,replace_index=primary_key_list
+                        )
+                        total_rows += len(rows_batch)
+                    
+                    print(f"Всего вставлено {total_rows} строк в таблицу {table_name}")
+                    return total_rows
+                except Exception as e:
+                    print(f"Ошибка при итеративной загрузке: {e}")
+                    raise
+
             # Загрузка всех таблиц в основную БД
             tables = [
                 (users_df, "users", ['user_id']),
@@ -266,8 +321,8 @@ def process_and_load_data(**context):
                 (payment_type_df, "payment_type", ['payment_type_id']),
                 (item_category_df, "item_category", ['item_category_id']),
                 (orders_df, "orders", ['order_id']),
-                (items_df, "items", ['item_id', 'validity_datetime_start', 'validity_datetime_end']),
-                (order_to_item_df, "order_to_item", ['order_id', 'item_id', 'validity_datetime_start', 'validity_datetime_end']),
+                (items_df, "items", ['item_id']),
+                (order_to_item_df, "order_to_item", ['order_id', 'item_id']),
                 (delivery_df, "delivery", ['driver_id', 'order_id'])
             ]
             
