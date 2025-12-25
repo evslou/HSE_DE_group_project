@@ -80,7 +80,7 @@ CREATE TABLE order_to_item
   PRIMARY KEY (order_id, item_id, validity_datetime_start, validity_datetime_end),
   FOREIGN KEY (order_id) REFERENCES orders(order_id),
   FOREIGN KEY (item_id, validity_datetime_start, validity_datetime_end) REFERENCES items(item_id, validity_datetime_start, validity_datetime_end),
-  FOREIGN KEY (item_replaced_id) REFERENCES item(item_id)
+  FOREIGN KEY (item_replaced_id) REFERENCES items(item_id)
 );
 
 CREATE TABLE delivery
