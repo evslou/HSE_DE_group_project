@@ -54,7 +54,7 @@ def get_new_parquet_files(**context):
     try:
         with engine.connect() as connection:
             # Получаем список уже обработанных файлов
-            result = connection.execute("SELECT file_name FROM processed_files;")
+            result = connection.execute(text("SELECT file_name FROM processed_files;"))
             processed_files = {row[0] for row in result}
             
             # Получаем список всех parquet-файлов в директории
@@ -91,9 +91,20 @@ def process_and_load_data(**context):
         return
 
     # Инициализация SparkSession
+    # spark = SparkSession.builder \
+    #     .appName("AirflowParquetLoader") \
+    #     .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+    #     .getOrCreate()
     spark = SparkSession.builder \
         .appName("AirflowParquetLoader") \
+        .config("spark.master", "local") \
+        .config("spark.driver.host", "localhost") \
+        .config("spark.driver.bindAddress", "127.0.0.1") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+        .config("spark.driver.memory", "2g") \
+        .config("spark.executor.memory", "2g") \
+        .config("spark.network.timeout", "600s") \
+        .config("spark.executor.heartbeatInterval", "30s") \
         .getOrCreate()
 
     # Hook для основной БД приложения
@@ -297,13 +308,12 @@ def process_and_load_data(**context):
             
             # Обновляем таблицу processed_files в БД Airflow
             with engine.connect() as connection:
-                cursor = connection.cursor()
                 insert_query = """
                     INSERT INTO processed_files (file_name)
-                    VALUES (%s)
+                    VALUES (:s)
                     ON CONFLICT (file_name) DO NOTHING;
                 """
-                connection.execute(insert_query, (file_name,))
+                connection.execute(text(insert_query), {"s": file_name})
                 connection.commit()
             
             print(f"Файл {file_name} успешно обработан и добавлен в отслеживаемые.")
