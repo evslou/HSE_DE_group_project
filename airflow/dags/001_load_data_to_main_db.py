@@ -199,7 +199,7 @@ def process_and_load_data(**context):
 
             # Добавляем временные метки валидности (SCD Type 2)
             current_time = datetime.now()
-            max_time = datetime(9999, 12, 31, 23, 59, 59)
+            max_time = datetime(2199, 12, 31, 23, 59, 59)
             items_df = items_df.withColumn(
                 "validity_datetime_start",
                 lit(current_time).cast(TimestampType())
@@ -260,9 +260,10 @@ def process_and_load_data(**context):
             #         .option("driver", "org.postgresql.Driver") \
             #         .mode("append") \
             #         .save()
-            def load_to_postgres(spark_df, table_name):
+            def load_to_postgres(spark_df, table_name, primary_key_list):
                 pandas_df = spark_df.toPandas()
                 pandas_df = pandas_df.where(pandas_df.notna(), None)
+                pandas_df = pandas_df.replace({pd.NaT: None})
                 
                 rows = [tuple(row) for row in pandas_df.to_numpy()]
                 columns = list(pandas_df.columns)
@@ -272,26 +273,26 @@ def process_and_load_data(**context):
                     ,rows=rows
                     ,target_fields=columns
                     ,commit_every=1000  # Пакетная вставка по 1000 строк
-                    # ,replace=False
-                    # ,replace_index=columns  # Если нужно UPSERT логика
+                    ,replace=True
+                    ,replace_index=primary_key_list
                 )
             
             # Загрузка всех таблиц в основную БД
             tables = [
-                (users_df, "users"),
-                (driver_df, "driver"),
-                (store_df, "store"),
-                (payment_type_df, "payment_type"),
-                (item_category_df, "item_category"),
-                (orders_df, "orders"),
-                (items_df, "items"),
-                (order_to_item_df, "order_to_item"),
-                (delivery_df, "delivery")
+                (users_df, "users", ['user_id']),
+                (driver_df, "driver", ['driver_id']),
+                (store_df, "store", ['store_id']),
+                (payment_type_df, "payment_type", ['payment_type_id']),
+                (item_category_df, "item_category", ['item_category_id']),
+                (orders_df, "orders", ['order_id']),
+                (items_df, "items", ['item_id', 'validity_datetime_start', 'validity_datetime_end']),
+                (order_to_item_df, "order_to_item", ['order_id', 'item_id', 'validity_datetime_start', 'validity_datetime_end']),
+                (delivery_df, "delivery", ['driver_id', 'order_id'])
             ]
             
-            for df_table, table_name in tables:
+            for df_table, table_name, primary_key_list in tables:
                 print(f"Загрузка данных в таблицу {table_name}...")
-                load_to_postgres(df_table, table_name)
+                load_to_postgres(df_table, table_name, primary_key_list)
                 print(f"Таблица {table_name} успешно обновлена.")
             
             # Обновляем таблицу processed_files в БД Airflow
