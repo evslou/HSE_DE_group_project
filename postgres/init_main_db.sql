@@ -43,7 +43,7 @@ CREATE TABLE orders
   canceled_at TIMESTAMP,
   order_discount FLOAT NOT NULL,
   order_cancellation_reason VARCHAR,
-  deliver_city VARCHAR NOT NULL,
+  delivery_city VARCHAR NOT NULL,
   address_text VARCHAR NOT NULL,
   delivery_cost FLOAT NOT NULL,
   user_id INT NOT NULL,
