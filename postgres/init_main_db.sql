@@ -60,11 +60,8 @@ CREATE TABLE items
   item_id INT NOT NULL,
   item_title VARCHAR NOT NULL,
   item_price FLOAT NOT NULL,
-  validity_datetime_start TIMESTAMP NOT NULL,
-  validity_datetime_end TIMESTAMP NOT NULL,
-  item_rownumber INT NOT NULL,
   item_category_id INT NOT NULL,
-  PRIMARY KEY (item_id, item_rownumber),
+  PRIMARY KEY (item_id),
   FOREIGN KEY (item_category_id) REFERENCES item_category(item_category_id)
 );
 
@@ -75,13 +72,11 @@ CREATE TABLE order_to_item
   item_discount FLOAT NOT NULL,
   order_id INT NOT NULL,
   item_id INT NOT NULL,
-  item_rownumber INT NOT NULL,
   item_replaced_id INT,
-  item_replaced_rownumber INT,
-  PRIMARY KEY (order_id, item_id, item_rownumber),
+  PRIMARY KEY (order_id, item_id),
   FOREIGN KEY (order_id) REFERENCES orders(order_id),
-  FOREIGN KEY (item_id, item_rownumber) REFERENCES items(item_id, item_rownumber),
-  FOREIGN KEY (item_replaced_id, item_replaced_rownumber) REFERENCES items(item_id, item_rownumber)
+  FOREIGN KEY (item_id) REFERENCES items(item_id),
+  FOREIGN KEY (item_replaced_id) REFERENCES items(item_id)
 );
 
 CREATE TABLE delivery

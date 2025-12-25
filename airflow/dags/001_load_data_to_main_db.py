@@ -177,8 +177,8 @@ def process_and_load_data(**context):
                 to_date(col("canceled_at")).alias("canceled_at"),
                 col("order_discount").cast("float"),
                 col("order_cancellation_reason").cast("string"),
-                col("delivery_cost").cast("float"),  # delivery_cost остается в Order
-                col("address_text").cast("string"),  # address_text остается в Order
+                col("delivery_cost").cast("float"),
+                col("address_text").cast("string"),
                 col("user_id").cast("int"),
                 col("store_id").cast("int")
             ).distinct()
@@ -202,19 +202,8 @@ def process_and_load_data(**context):
                 "left"
             ).drop("item_category")
 
-            # Добавляем временные метки валидности (SCD Type 2)
-            current_time = datetime.now()
-            max_time = datetime(2199, 12, 31, 23, 59, 59)
-            items_df = items_df.withColumn(
-                "validity_datetime_start",
-                lit(current_time).cast(TimestampType())
-            ).withColumn(
-                "validity_datetime_end",
-                lit(max_time).cast(TimestampType())
-            ).select(
-                "item_id", "item_title", "item_price",
-                "validity_datetime_start", "validity_datetime_end",
-                "item_category_id"
+            items_df = items_df.select(
+                "item_id", "item_title", "item_price","item_category_id"
             ).orderBy("item_id")
 
             # 8. Таблица order_to_item
@@ -227,12 +216,6 @@ def process_and_load_data(**context):
                      col("item_replaced_id").cast("int")).otherwise(lit(0)).alias("item_replaced_id"),
                 col("item_discount").cast("float")
             ).distinct()
-
-            # Добавляем временные метки валидности из items_df
-            order_to_item_df = order_to_item_df.join(
-                items_df.select("item_id", "validity_datetime_start", "validity_datetime_end"),
-                "item_id"
-            )
 
             # 9. Таблица delivery
             delivery_df = df.select(
