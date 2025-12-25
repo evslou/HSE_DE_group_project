@@ -49,7 +49,7 @@ def get_new_parquet_files(**context):
     sql_alchemy_conn = conf.get('database', 'sql_alchemy_conn')
     
     # 2. Создаем engine для подключения к метабазе
-    engine = create_engine(sql_alchemy_conn)
+    engine = create_engine(sql_alchemy_conn, future=True)
     
     try:
         with engine.connect() as connection:
@@ -90,21 +90,17 @@ def process_and_load_data(**context):
         print("Нет новых файлов для обработки. Задача завершена.")
         return
 
-    # Инициализация SparkSession
-    # spark = SparkSession.builder \
-    #     .appName("AirflowParquetLoader") \
-    #     .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
-    #     .getOrCreate()
     spark = SparkSession.builder \
         .appName("AirflowParquetLoader") \
         .config("spark.master", "local") \
         .config("spark.driver.host", "localhost") \
         .config("spark.driver.bindAddress", "127.0.0.1") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
-        .config("spark.driver.memory", "2g") \
+        .config("spark.driver.memory", "4g") \
         .config("spark.executor.memory", "2g") \
-        .config("spark.network.timeout", "600s") \
-        .config("spark.executor.heartbeatInterval", "30s") \
+        .config("spark.driver.maxResultSize", "2g") \
+        .config("spark.network.timeout", "1200s") \
+        .config("spark.executor.heartbeatInterval", "60s") \
         .getOrCreate()
 
     # Hook для основной БД приложения
@@ -112,7 +108,7 @@ def process_and_load_data(**context):
     
     # Hook для БД Airflow (для обновления processed_files)
     sql_alchemy_conn = conf.get('database', 'sql_alchemy_conn')
-    engine = create_engine(sql_alchemy_conn)
+    engine = create_engine(sql_alchemy_conn, future=True)
     
     try:
         for file_name in new_files:
@@ -128,7 +124,7 @@ def process_and_load_data(**context):
                 col("user_id").cast("int"),
                 col("user_phone").cast("string")
             ).distinct().orderBy("user_id")
-
+            
             # 2. Таблица driver
             driver_df = df.select(
                 col("driver_id").cast("int"),
@@ -144,7 +140,7 @@ def process_and_load_data(**context):
             # Добавляем недостающие колонки (пример)
             store_df = store_df.withColumn("store_city", element_at(split(col("store_address"), ", "), 2)) \
                                .withColumn("store_name", element_at(split(col("store_address"), ", "), 1))
-
+                               
             # 4. Таблица payment_type
             payment_types = df.select("payment_type").distinct().collect()
             payment_type_dict = []
@@ -176,22 +172,20 @@ def process_and_load_data(**context):
             # 6. Таблица orders
             orders_df = df.select(
                 col("order_id").cast("int"),
-                to_timestamp(col("created_at")).alias("created_at"),
-                to_timestamp(col("paid_at")).alias("paid_at"),
-                to_timestamp(col("canceled_at")).alias("canceled_at"),
+                to_date(col("created_at")).alias("created_at"),
+                to_date(col("paid_at")).alias("paid_at"),
+                to_date(col("canceled_at")).alias("canceled_at"),
                 col("order_discount").cast("float"),
                 col("order_cancellation_reason").cast("string"),
+                col("delivery_cost").cast("float"),  # delivery_cost остается в Order
+                col("address_text").cast("string"),  # address_text остается в Order
                 col("user_id").cast("int"),
-                col("store_id").cast("int"),
-                col("payment_type").alias("payment_type_str")  # Временная колонка
+                col("store_id").cast("int")
             ).distinct()
-
-            # Соединяем с payment_type_df, чтобы получить payment_type_id
-            orders_df = orders_df.join(
-                payment_type_df,
-                orders_df.payment_type_str == payment_type_df.payment_type,
-                "left"
-            ).drop("payment_type_str", "payment_type")
+            orders_df = orders_df.withColumn("delivery_city", element_at(split(col("address_text"), ", "), 1))
+            
+            orders_df = orders_df.join(df.select("order_id", "payment_type").distinct(), "order_id")
+            orders_df = orders_df.join(payment_type_df, "payment_type").drop("payment_type")
 
             # 7. Таблица items
             items_df = df.select(
@@ -244,16 +238,9 @@ def process_and_load_data(**context):
             delivery_df = df.select(
                 col("order_id").cast("int"),
                 col("driver_id").cast("int"),
-                col("delivery_cost").cast("float"),
                 to_timestamp(col("delivery_started_at")).alias("delivery_started_at"),
                 to_timestamp(col("delivered_at")).alias("delivered_at"),
-                col("address_text").cast("string").alias("address_text")
             ).distinct()
-
-            # Удаляем записи, где driver_id отсутствует и добавляем город доставки
-            delivery_df = delivery_df.filter(col("driver_id").isNotNull()) \
-                                     .withColumn("deliver_city", element_at(split(col("address_text"), ", "), 1))
-
 
             # --- Загрузка данных в основную БД (postgres-main) ---
             # Получаем параметры подключения для основной БД

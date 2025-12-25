@@ -15,9 +15,9 @@ CREATE TABLE driver
 CREATE TABLE store
 (
   store_id INT NOT NULL,
+  store_address VARCHAR NOT NULL,
   store_name VARCHAR NOT NULL,
   store_city VARCHAR NOT NULL,
-  store_address VARCHAR NOT NULL,
   PRIMARY KEY (store_id)
 );
 
@@ -43,6 +43,9 @@ CREATE TABLE orders
   canceled_at TIMESTAMP,
   order_discount FLOAT NOT NULL,
   order_cancellation_reason VARCHAR,
+  deliver_city VARCHAR NOT NULL,
+  address_text VARCHAR NOT NULL,
+  delivery_cost FLOAT NOT NULL,
   user_id INT NOT NULL,
   store_id INT NOT NULL,
   payment_type_id INT NOT NULL,
@@ -68,24 +71,22 @@ CREATE TABLE order_to_item
 (
   item_quantity FLOAT NOT NULL,
   item_canceled_quantity FLOAT NOT NULL,
-  item_replaced_id INT NOT NULL,
   item_discount FLOAT NOT NULL,
   order_id INT NOT NULL,
   item_id INT NOT NULL,
   validity_datetime_start TIMESTAMP NOT NULL,
   validity_datetime_end TIMESTAMP NOT NULL,
+  item_replaced_id INT,
   PRIMARY KEY (order_id, item_id, validity_datetime_start, validity_datetime_end),
   FOREIGN KEY (order_id) REFERENCES orders(order_id),
-  FOREIGN KEY (item_id, validity_datetime_start, validity_datetime_end) REFERENCES items(item_id, validity_datetime_start, validity_datetime_end)
+  FOREIGN KEY (item_id, validity_datetime_start, validity_datetime_end) REFERENCES items(item_id, validity_datetime_start, validity_datetime_end),
+  FOREIGN KEY (item_replaced_id) REFERENCES item(item_id)
 );
 
 CREATE TABLE delivery
 (
-  delivery_cost FLOAT NOT NULL,
   delivery_started_at TIMESTAMP,
   delivered_at TIMESTAMP,
-  deliver_city VARCHAR NOT NULL,
-  address_text VARCHAR NOT NULL,
   driver_id INT NOT NULL,
   order_id INT NOT NULL,
   PRIMARY KEY (driver_id, order_id),
